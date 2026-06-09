@@ -44,9 +44,6 @@ export default function App() {
   const [reasoningExpanded, setReasoningExpanded] = useState(true);
   const [exportConnections, setExportConnections] = useState({ notion: false, google_docs: false });
   const [exporting, setExporting] = useState(null); // null | "notion" | "google_docs"
-  const [shareUrl, setShareUrl] = useState(null);
-  const [shareCopied, setShareCopied] = useState(false);
-  const [sharedView, setSharedView] = useState(null); // data from /shared/:token
 
   const wsRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -174,53 +171,6 @@ export default function App() {
     }
   };
 
-  const handleShare = async () => {
-    // Use jobId for Research mode, chatSessionId for Q&A mode
-    const refId = mode === "report" ? jobId : chatSessionId;
-    if (!refId) return;
-    try {
-      const res = await fetch(`${API_BASE}/chat/${refId}/share`, {
-        method: "POST",
-        headers: { ...getAuthHeaders() },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Failed to create share link");
-      setShareUrl(data.url);
-      navigator.clipboard.writeText(data.url).then(() => {
-        setShareCopied(true);
-        setTimeout(() => setShareCopied(false), 2000);
-      });
-    } catch (e) {
-      setError(`Share failed: ${e.message}`);
-    }
-  };
-
-  const handleRevokeShare = async () => {
-    const refId = mode === "report" ? jobId : chatSessionId;
-    if (!refId) return;
-    try {
-      await fetch(`${API_BASE}/chat/${refId}/share`, {
-        method: "DELETE",
-        headers: { ...getAuthHeaders() },
-      });
-      setShareUrl(null);
-    } catch (e) {
-      setError(`Revoke failed: ${e.message}`);
-    }
-  };
-
-  // Detect /shared/:token URL and load public shared view
-  useEffect(() => {
-    const match = window.location.pathname.match(/^\/shared\/([a-f0-9-]+)$/i);
-    if (match) {
-      const shareToken = match[1];
-      fetch(`${API_BASE}/shared/${shareToken}`)
-        .then((res) => { if (!res.ok) throw new Error("Not found"); return res.json(); })
-        .then((data) => setSharedView(data))
-        .catch(() => setSharedView({ error: true }));
-    }
-  }, []);
-
   const resetState = () => {
     setAgentStatuses({});
     setReport(null);
@@ -236,8 +186,6 @@ export default function App() {
     setClaims([]);
     setClaimsLoading(false);
     setReasoningTraces([]);
-    setShareUrl(null);
-    setShareCopied(false);
   };
 
   const handleNewChat = () => {
@@ -699,111 +647,6 @@ export default function App() {
     }
   }, [chatMessages, running]);
 
-  // Public shared view — read-only, no auth required
-  if (sharedView) {
-    if (sharedView.error) {
-      return (
-        <div className="shared-view">
-          <div className="shared-container">
-            <h1>Shared content not found</h1>
-            <p>This shared link may have been revoked or is invalid.</p>
-            <a href="/" className="btn-view">← Go to App</a>
-          </div>
-        </div>
-      );
-    }
-
-    const isQA = sharedView.type === "Q&A";
-
-    return (
-      <div className="shared-view">
-        <div className="shared-container">
-          <div className="shared-header">
-            <div className="shared-badge">{isQA ? "Shared Q&A Conversation" : "Shared Research Report"}</div>
-            <h1>{sharedView.title || sharedView.query}</h1>
-            <div className="shared-meta">
-              {sharedView.author && <span>By {sharedView.author}</span>}
-              {sharedView.created_at && (
-                <span> · {new Date(sharedView.created_at).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
-              )}
-            </div>
-          </div>
-
-          {/* Q&A conversation */}
-          {isQA && sharedView.messages && sharedView.messages.length > 0 && (
-            <div className="shared-conversation">
-              {sharedView.messages.map((m, i) => (
-                <div key={i} className="shared-turn">
-                  <div className="shared-msg shared-msg-user">
-                    <div className="shared-msg-label">You</div>
-                    <div className="shared-msg-content">{m.question}</div>
-                  </div>
-                  <div className="shared-msg shared-msg-assistant">
-                    <div className="shared-msg-label">Assistant</div>
-                    <div className="shared-msg-content">
-                      <ReactMarkdown>{m.answer}</ReactMarkdown>
-                    </div>
-                    {m.sources && m.sources.length > 0 && (
-                      <div className="shared-msg-sources">
-                        {m.sources.map((s, j) => (
-                          <a key={j} href={s.url || s} target="_blank" rel="noopener noreferrer" className="shared-source-chip">
-                            {s.title || s.url || s}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Research report */}
-          {!isQA && sharedView.report && (
-            <div className="shared-report">
-              <ReactMarkdown>{sharedView.report}</ReactMarkdown>
-            </div>
-          )}
-
-          {!isQA && sharedView.claims && sharedView.claims.length > 0 && (
-            <details className="shared-section" open>
-              <summary>Fact-Check Results ({sharedView.claims.length} claims)</summary>
-              <div className="shared-claims">
-                {sharedView.claims.map((c, i) => (
-                  <div key={i} className={`shared-claim claim-${c.status}`}>
-                    <span className="claim-status-dot" />
-                    <div>
-                      <div className="claim-text">{c.claim}</div>
-                      <div className="claim-detail">{c.status} · {Math.round((c.confidence || 0) * 100)}% confidence</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-
-          {!isQA && sharedView.sources && sharedView.sources.length > 0 && (
-            <details className="shared-section">
-              <summary>Sources ({sharedView.sources.length})</summary>
-              <ul className="shared-sources">
-                {sharedView.sources.map((s, i) => (
-                  <li key={i}>
-                    <a href={s.url} target="_blank" rel="noopener noreferrer">{s.title || s.url}</a>
-                    {s.snippet && <p className="source-snippet">{s.snippet}</p>}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-
-          <div className="shared-footer">
-            <a href="/" className="btn-view">← Go to App</a>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="app-wrapper">
       <Navbar
@@ -812,12 +655,6 @@ export default function App() {
         onGoogleLogin={handleGoogleLogin}
         apiBase={API_BASE}
         token={token}
-        canShare={!!(report || chatMessages.length > 0)}
-        shareUrl={shareUrl}
-        shareCopied={shareCopied}
-        onShare={handleShare}
-        onRevokeShare={handleRevokeShare}
-        onCopyShareUrl={() => { navigator.clipboard.writeText(shareUrl); setShareCopied(true); setTimeout(() => setShareCopied(false), 2000); }}
       />
       <div className="app-layout">
         <Sidebar apiBase={API_BASE} onSelectChat={handleSelectJob} onNewChat={handleNewChat} token={token} user={user} />

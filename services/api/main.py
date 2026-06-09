@@ -837,7 +837,7 @@ async def google_docs_connect(request: Request):
 
     base_url = os.getenv("APP_BASE_URL", "http://localhost:3000")
     redirect_uri = f"{base_url}/api/export/google-docs/callback"
-    scope = "https://www.googleapis.com/auth/documents"
+    scope = "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/drive.file"
     state = user["user_id"]
 
     url = (
@@ -1040,7 +1040,8 @@ async def export_to_google_docs(job_id: str, request: Request):
         )
 
         if create_res.status_code not in (200, 201):
-            raise HTTPException(status_code=502, detail="Failed to create Google Doc")
+            logger.error(f"Google Docs create failed: {create_res.status_code} {create_res.text}")
+            raise HTTPException(status_code=502, detail=f"Failed to create Google Doc: {create_res.json().get('error', {}).get('message', create_res.text[:200])}")
 
         doc = create_res.json()
         doc_id = doc["documentId"]
@@ -1062,155 +1063,6 @@ async def export_to_google_docs(job_id: str, request: Request):
 
     doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
     return {"success": True, "url": doc_url, "title": title}
-
-
-# ── Share ─────────────────────────────────────────────────────────────────────
-
-@app.post("/chat/{chat_id}/share")
-async def create_share_link(chat_id: str, request: Request):
-    """Generate a shareable link for a chat (Research or Q&A).
-    chat_id can be the ChatHistory.id OR a ref_id (job_id / chat_session_id)."""
-    user = require_auth(request)
-    db = SessionLocal()
-
-    # Try direct ChatHistory lookup first
-    chat = db.query(ChatHistory).filter(
-        ChatHistory.id == chat_id,
-        ChatHistory.user_id == user["user_id"],
-    ).first()
-
-    # Fallback: find by ref_id (job_id or chat_session_id)
-    if not chat:
-        chat = db.query(ChatHistory).filter(
-            ChatHistory.ref_id == chat_id,
-            ChatHistory.user_id == user["user_id"],
-        ).first()
-
-    if not chat:
-        db.close()
-        raise HTTPException(status_code=404, detail="Chat not found")
-
-    import uuid as _uuid
-    if not chat.share_token:
-        chat.share_token = str(_uuid.uuid4())
-        db.commit()
-
-    token = chat.share_token
-    db.close()
-
-    base_url = os.getenv("APP_BASE_URL", "http://localhost:3000")
-    return {"share_token": token, "url": f"{base_url}/shared/{token}"}
-
-
-@app.delete("/chat/{chat_id}/share")
-async def revoke_share_link(chat_id: str, request: Request):
-    """Revoke a shareable link."""
-    user = require_auth(request)
-    db = SessionLocal()
-
-    chat = db.query(ChatHistory).filter(
-        ChatHistory.id == chat_id,
-        ChatHistory.user_id == user["user_id"],
-    ).first()
-    if not chat:
-        chat = db.query(ChatHistory).filter(
-            ChatHistory.ref_id == chat_id,
-            ChatHistory.user_id == user["user_id"],
-        ).first()
-
-    if not chat:
-        db.close()
-        raise HTTPException(status_code=404, detail="Chat not found")
-    chat.share_token = None
-    db.commit()
-    db.close()
-    return {"success": True}
-
-
-@app.get("/shared/{share_token}")
-async def get_shared_content(share_token: str):
-    """Public endpoint — returns a shared Research report or Q&A conversation."""
-    db = SessionLocal()
-
-    # First check ChatHistory
-    chat = db.query(ChatHistory).filter(ChatHistory.share_token == share_token).first()
-    if not chat:
-        # Fallback: check ResearchJob.share_token for backward compatibility
-        job = db.query(ResearchJob).filter(ResearchJob.share_token == share_token).first()
-        if not job:
-            db.close()
-            raise HTTPException(status_code=404, detail="Shared content not found")
-        # Build response from ResearchJob directly
-        from shared.database import Source
-        author_name = None
-        if job.user_id:
-            author = db.query(User).filter(User.id == job.user_id).first()
-            if author:
-                author_name = author.name
-        sources = db.query(Source).filter(Source.job_id == job.id).all()
-        claims = db.query(ClaimVerification).filter(ClaimVerification.job_id == job.id).all()
-        db.close()
-        return {
-            "type": "Research",
-            "title": job.query,
-            "query": job.query,
-            "report": job.report,
-            "created_at": job.created_at.isoformat() if job.created_at else None,
-            "author": author_name,
-            "sources": [{"url": s.url, "title": s.title, "snippet": s.snippet} for s in sources],
-            "claims": [{"claim": c.claim, "status": c.status, "confidence": c.confidence, "source_url": c.source_url} for c in claims],
-            "messages": [],
-        }
-
-    # Get author info
-    author_name = None
-    author = db.query(User).filter(User.id == chat.user_id).first()
-    if author:
-        author_name = author.name
-
-    result = {
-        "type": chat.type,
-        "title": chat.title,
-        "created_at": chat.created_at.isoformat() if chat.created_at else None,
-        "author": author_name,
-    }
-
-    if chat.type == "Research":
-        job = db.query(ResearchJob).filter(ResearchJob.id == chat.ref_id).first()
-        from shared.database import Source
-        sources = db.query(Source).filter(Source.job_id == chat.ref_id).all() if job else []
-        claims = db.query(ClaimVerification).filter(ClaimVerification.job_id == chat.ref_id).all() if job else []
-        result.update({
-            "query": job.query if job else chat.title,
-            "report": job.report if job else None,
-            "sources": [{"url": s.url, "title": s.title, "snippet": s.snippet} for s in sources],
-            "claims": [{"claim": c.claim, "status": c.status, "confidence": c.confidence, "source_url": c.source_url} for c in claims],
-            "messages": [],
-        })
-    elif chat.type == "Q&A":
-        qa_list = (
-            db.query(QAInteraction)
-            .filter(QAInteraction.chat_session_id == chat.ref_id)
-            .order_by(QAInteraction.created_at.asc())
-            .all()
-        )
-        result.update({
-            "messages": [
-                {
-                    "question": qa.question,
-                    "answer": qa.answer,
-                    "sources": json.loads(qa.sources) if qa.sources else [],
-                    "created_at": str(qa.created_at),
-                }
-                for qa in qa_list
-            ],
-            "report": None,
-            "sources": [],
-            "claims": [],
-        })
-
-    db.close()
-    return result
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────

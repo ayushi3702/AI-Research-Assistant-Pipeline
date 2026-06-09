@@ -34,7 +34,6 @@ class ResearchJob(Base):
     query       = Column(Text, nullable=False)
     status      = Column(String, default="pending")   # pending|running|done|failed
     report      = Column(Text)
-    share_token = Column(String, unique=True, nullable=True, index=True)
     created_at  = Column(DateTime, default=_now_ist)
     finished_at = Column(DateTime)
 
@@ -85,7 +84,6 @@ class ChatHistory(Base):
     title      = Column(String, nullable=False)
     ref_id     = Column(String, nullable=False)  # points to research_jobs.id or qa_interactions.id
     pinned     = Column(Boolean, default=False)
-    share_token = Column(String, unique=True, nullable=True, index=True)
     created_at = Column(DateTime, default=_now_ist)
 
 
@@ -188,6 +186,7 @@ def init_db() -> None:
     """Create all tables if they don't exist, and migrate missing columns."""
     Base.metadata.create_all(engine)
     _migrate_missing_columns()
+    _drop_removed_columns()
 
 
 def _migrate_missing_columns():
@@ -207,6 +206,24 @@ def _migrate_missing_columns():
                     conn.execute(text(
                         f'ALTER TABLE {table_name} ADD COLUMN {col.name} {col_type}'
                     ))
+
+
+def _drop_removed_columns():
+    """Drop columns that exist in the database but are no longer defined in models."""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+
+    for table_class in Base.__subclasses__():
+        table_name = table_class.__tablename__
+        if not inspector.has_table(table_name):
+            continue
+        model_cols = {col.name for col in table_class.__table__.columns}
+        existing = {col["name"] for col in inspector.get_columns(table_name)}
+        for col_name in existing - model_cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f'ALTER TABLE {table_name} DROP COLUMN {col_name}'
+                ))
 
 
 def get_db():

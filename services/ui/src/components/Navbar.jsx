@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token, canShare, shareUrl, shareCopied, onShare, onRevokeShare, onCopyShareUrl }) {
+export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token }) {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "light");
   const [showLogin, setShowLogin] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -138,22 +138,6 @@ export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token, 
                     )}
                   </div>
                 </div>
-              )}
-            </div>
-          )}
-          {user && canShare && (
-            <div className="navbar-share">
-              {shareUrl ? (
-                <div className="share-active">
-                  <button className="btn-share" onClick={onCopyShareUrl}>
-                    {shareCopied ? "✅ Copied!" : "🔗 Share"}
-                  </button>
-                  <button className="btn-share-revoke" onClick={onRevokeShare} title="Revoke share link">✕</button>
-                </div>
-              ) : (
-                <button className="btn-share" onClick={onShare}>
-                  🔗 Share
-                </button>
               )}
             </div>
           )}

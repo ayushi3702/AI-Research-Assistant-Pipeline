@@ -1,6 +1,6 @@
 # AI Research Assistant Pipeline
 
-A production-grade **multi-agent research pipeline** that generates comprehensive, fact-checked research reports with real-time agent reasoning transparency, trust heatmaps, shareable links, and export integrations.
+A production-grade **multi-agent research pipeline** that generates comprehensive, fact-checked research reports with real-time agent reasoning transparency, trust heatmaps, and export integrations.
 
 Built with LangGraph, FastAPI, React, and Azure OpenAI.
 
@@ -27,8 +27,7 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 - **Follow-up suggestions** — AI-generated follow-up questions
 - **Voice input** — speech-to-text via Web Speech API
 
-### Sharing & Export
-- **Shareable links** — public read-only view of any Research report or Q&A conversation (like ChatGPT share)
+### Export
 - **Export to Notion** — OAuth integration, creates a formatted Notion page
 - **Export to Google Docs** — OAuth integration with token refresh, creates a Google Doc
 - **Download** — PDF and DOCX export
@@ -50,12 +49,11 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Firebase Hosting / nginx (port 3000)                       │
+│  nginx (port 3000)                                          │
 │  React + Vite SPA                                           │
 │  ┌──────────┬──────────┬────────────┬──────────┬──────────┐ │
 │  │ Sidebar  │ Navbar   │TrustHeatmap│Reasoning │ AgentCard│ │
-│  │          │(Bell,    │            │Panel     │          │ │
-│  │          │ Share)   │            │          │          │ │
+│  │          │(Bell)    │            │Panel     │          │ │
 │  └──────────┴──────────┴────────────┴──────────┴──────────┘ │
 │         /api/* proxy  │  /ws/* proxy                        │
 └───────────────────────┼─────────────────────────────────────┘
@@ -66,7 +64,7 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 │  │ REST API           │ WebSocket (live status + reasoning)│ │
 │  │ Auth, Research,    │                                    │ │
 │  │ Q&A, Notifications,│                                    │ │
-│  │ Export, Share       │                                    │ │
+│  │ Export              │                                    │ │
 │  └────────────────────┼───────────────────────────────────┘ │
 │           │           │                                     │
 │  ┌────────▼──────────────────────────────────────────────┐  │
@@ -97,7 +95,7 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
 │   ├── api/                       # FastAPI backend
-│   │   ├── main.py                # REST + WebSocket + OAuth + Export + Share
+│   │   ├── main.py                # REST + WebSocket + OAuth + Export
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
 │   └── ui/                        # React frontend
@@ -106,7 +104,7 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 │       │   ├── App.css            # Full theme (light/dark, all components)
 │       │   ├── main.jsx           # React entry point
 │       │   └── components/
-│       │       ├── Navbar.jsx     # Theme toggle, notifications, share button
+│       │       ├── Navbar.jsx     # Theme toggle, notifications
 │       │       ├── Sidebar.jsx    # Chat history, search, pin
 │       │       ├── TrustHeatmap.jsx   # Fact-check heatmap + confidence bar
 │       │       ├── ReasoningPanel.jsx # Agent reasoning trace timeline
@@ -215,11 +213,11 @@ SMTP_FROM=your-email@gmail.com
 | Model | Purpose |
 |-------|---------|
 | `User` | Email/password + Google OAuth users |
-| `ResearchJob` | Research query, status, report, share token |
+| `ResearchJob` | Research query, status, report |
 | `AgentTask` | Per-agent execution log (timing, I/O) |
 | `Source` | URLs, titles, snippets found during research |
 | `Document` | Uploaded files for Q&A |
-| `ChatHistory` | Sidebar entries (Research + Q&A), share tokens |
+| `ChatHistory` | Sidebar entries (Research + Q&A) |
 | `QAInteraction` | Q&A conversation messages |
 | `ClaimVerification` | Fact-check results per claim |
 | `ReasoningTrace` | Agent reasoning steps with decisions |
@@ -261,13 +259,6 @@ SMTP_FROM=your-email@gmail.com
 | GET | `/chats` | List user's chat history |
 | GET | `/chats/{id}` | Load a specific chat |
 | PATCH | `/chats/{id}/pin` | Pin/unpin a chat |
-
-### Share
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/chat/{id}/share` | Generate shareable link |
-| DELETE | `/chat/{id}/share` | Revoke share link |
-| GET | `/shared/{token}` | Public shared view (no auth) |
 
 ### Export
 | Method | Endpoint | Description |
