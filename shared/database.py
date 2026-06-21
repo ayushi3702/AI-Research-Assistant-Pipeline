@@ -143,6 +143,20 @@ class OAuthConnection(Base):
     updated_at    = Column(DateTime, default=_now_ist, onupdate=_now_ist)
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id     = Column(String, ForeignKey("research_jobs.id"), nullable=True, index=True)
+    user_id    = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    level      = Column(String, default="info", index=True)   # info|warning|error
+    event      = Column(String, nullable=False)               # job_started|job_completed|job_failed|agent_failed|...
+    agent      = Column(String)                               # agent/step where the event occurred
+    message    = Column(Text)                                 # human-readable summary
+    detail     = Column(Text)                                 # traceback or JSON detail
+    created_at = Column(DateTime, default=_now_ist, index=True)
+
+
 class QAInteraction(Base):
     __tablename__ = "qa_interactions"
 

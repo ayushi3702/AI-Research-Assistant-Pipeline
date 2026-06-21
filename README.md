@@ -23,7 +23,7 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 
 ### Quick Q&A Mode
 - **Document upload** — PDF, DOCX, TXT, MD — chunked and indexed for Q&A
-- **Conversational Q&A** — multi-turn chat with source citations
+- **Conversational Q&A chatbot** — multi-turn chat with source citations
 - **Follow-up suggestions** — AI-generated follow-up questions
 - **Voice input** — speech-to-text via Web Speech API
 
@@ -35,6 +35,11 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 ### Notifications
 - **Email notifications** — Gmail SMTP, sends report-ready alerts
 - **In-app notification bell** — unread badge, dropdown with mark-read, auto-polls every 30s
+
+### Audit & Diagnostics
+- **Persistent audit log** — job lifecycle and failure events written to both the database (`audit_logs` table) and a rotating `logs/audit.log` file
+- **Failure tracing** — records the failing agent, error message, and full traceback for support/debugging
+- **Lookup endpoints** — query a single job's audit trail or browse recent failures across users
 
 ### Auth & UX
 - **Google OAuth** login
@@ -113,13 +118,14 @@ Built with LangGraph, FastAPI, React, and Azure OpenAI.
 │       ├── package.json
 │       └── Dockerfile
 ├── shared/                        # Shared Python code
-│   ├── database.py                # SQLAlchemy models (11 tables), auto-migration
+│   ├── database.py                # SQLAlchemy models (12 tables), auto-migration
 │   ├── auth.py                    # JWT, bcrypt, Google OAuth, SMTP notifications
 │   ├── state.py                   # Pydantic ResearchState for LangGraph
 │   ├── message_bus.py             # Async pub/sub (no Redis needed)
 │   ├── vector_store.py            # ChromaDB + sentence-transformers
 │   ├── document_processor.py      # PDF/DOCX/TXT chunking for RAG
 │   ├── export_converters.py       # Markdown → Notion blocks / Google Docs requests
+│   ├── audit.py                   # Persistent audit log (DB + rotating file)
 │   └── tools.py                   # OpenAI function-calling tool schemas
 ├── tests/
 │   └── test_pipeline.py
@@ -166,6 +172,9 @@ LANGCHAIN_TRACING_V2=true
 
 # Database
 DATABASE_URL=postgresql://user:password@host:5432/dbname
+
+# Audit log (optional — defaults to /app/logs in Docker, ./logs locally)
+LOG_DIR=/app/logs
 
 # Auth
 JWT_SECRET_KEY=your_random_secret_key
@@ -223,6 +232,7 @@ SMTP_FROM=your-email@gmail.com
 | `ReasoningTrace` | Agent reasoning steps with decisions |
 | `NotificationLog` | Email/in-app notification records |
 | `OAuthConnection` | Notion + Google Docs OAuth tokens |
+| `AuditLog` | Job/agent lifecycle + failure events (with traceback) |
 
 ---
 
@@ -244,6 +254,7 @@ SMTP_FROM=your-email@gmail.com
 | GET | `/research/{id}/tasks` | Agent execution details |
 | GET | `/research/{id}/claims` | Fact-check verifications |
 | GET | `/research/{id}/reasoning` | Agent reasoning traces |
+| GET | `/research/{id}/audit` | Audit log for a single job |
 | GET | `/research/{id}/download` | Download PDF/DOCX |
 | WS | `/ws/{job_id}` | Live status + reasoning stream |
 
@@ -275,6 +286,12 @@ SMTP_FROM=your-email@gmail.com
 | GET | `/notifications` | List notifications |
 | PATCH | `/notifications/{id}/read` | Mark as read |
 | POST | `/notifications/read-all` | Mark all as read |
+
+### Audit
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/research/{id}/audit` | Audit log for one job (optional `?level=error`) |
+| GET | `/audit` | Browse recent audit entries across jobs (filter by `user_id`, `level`, `event`) |
 
 ---
 

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
-from shared.database import init_db, SessionLocal, ResearchJob, AgentTask, User, Document, ChatHistory, QAInteraction, ClaimVerification, ReasoningTrace, NotificationLog, OAuthConnection
+from shared.database import init_db, SessionLocal, ResearchJob, AgentTask, User, Document, ChatHistory, QAInteraction, ClaimVerification, ReasoningTrace, NotificationLog, OAuthConnection, AuditLog
 from shared.message_bus import bus
 from shared.auth import (
     hash_password, verify_password, create_access_token,
@@ -354,6 +354,75 @@ async def get_reasoning(job_id: str):
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
         for t in traces
+    ]
+
+
+@app.get("/research/{job_id}/audit")
+async def get_audit_log(job_id: str, level: Optional[str] = None):
+    """Return the audit log for a job — what ran, what failed, and why."""
+    db = SessionLocal()
+    try:
+        q = db.query(AuditLog).filter(AuditLog.job_id == job_id)
+        if level:
+            q = q.filter(AuditLog.level == level)
+        entries = q.order_by(AuditLog.created_at).all()
+    finally:
+        db.close()
+
+    return [
+        {
+            "id": a.id,
+            "level": a.level,
+            "event": a.event,
+            "agent": a.agent,
+            "message": a.message,
+            "detail": a.detail,
+            "user_id": a.user_id,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in entries
+    ]
+
+
+@app.get("/audit")
+async def list_audit_log(
+    user: dict = Depends(require_auth),
+    user_id: Optional[str] = None,
+    level: Optional[str] = None,
+    event: Optional[str] = None,
+    limit: int = 200,
+):
+    """
+    Support/diagnostics endpoint: browse recent audit entries across jobs.
+    Filter by user_id, level (info|warning|error), or event.
+    """
+    limit = max(1, min(limit, 1000))
+    db = SessionLocal()
+    try:
+        q = db.query(AuditLog)
+        if user_id:
+            q = q.filter(AuditLog.user_id == user_id)
+        if level:
+            q = q.filter(AuditLog.level == level)
+        if event:
+            q = q.filter(AuditLog.event == event)
+        entries = q.order_by(AuditLog.created_at.desc()).limit(limit).all()
+    finally:
+        db.close()
+
+    return [
+        {
+            "id": a.id,
+            "job_id": a.job_id,
+            "user_id": a.user_id,
+            "level": a.level,
+            "event": a.event,
+            "agent": a.agent,
+            "message": a.message,
+            "detail": a.detail,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in entries
     ]
 
 

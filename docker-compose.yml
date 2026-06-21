@@ -8,9 +8,11 @@ services:
       - "8000:8000"
     volumes:
       - chroma_data:/app/chroma_data
+      - audit_logs:/app/logs
     env_file: .env
     environment:
       - CHROMA_PERSIST_DIR=/app/chroma_data
+      - LOG_DIR=/app/logs
     networks:
       - pipeline
 
@@ -27,6 +29,7 @@ services:
 
 volumes:
   chroma_data:
+  audit_logs:
 
 networks:
   pipeline:

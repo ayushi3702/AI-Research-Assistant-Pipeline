@@ -193,6 +193,7 @@ export default function App() {
     setQuery("");
     setJobId(null);
     setAttachedFile(null);
+    localStorage.removeItem("pendingJob");
     savedQAState.current = { chatMessages: [], chatSessionId: null, attachedDocId: null, query: "" };
     savedReportState.current = { jobId: null, agentStatuses: {}, report: null, tasks: [], query: "", reportMessages: [] };
   };
@@ -316,6 +317,66 @@ export default function App() {
       setRunning(false);
     }
   }, [fetchClaims, fetchReasoning]);
+
+  // Load a report opened from an email "View Report" link (?job=<id>)
+  const loadReportFromLink = useCallback(async (jobParam) => {
+    setMode("report");
+    setJobId(jobParam);
+    try {
+      const res = await fetch(`${API_BASE}/research/${jobParam}`);
+      if (!res.ok) throw new Error("Job not found");
+      const data = await res.json();
+      if (data.report) setReport(data.report);
+      if (data.query) setQuery(data.query);
+
+      const tasksRes = await fetch(`${API_BASE}/research/${jobParam}/tasks`);
+      const tasksData = await tasksRes.json();
+      if (Array.isArray(tasksData) && tasksData.length) setTasks(tasksData);
+
+      fetchClaims(jobParam);
+      fetchReasoning(jobParam);
+    } catch (e) {
+      setError(`Could not load report: ${e.message}`);
+    }
+  }, [fetchClaims, fetchReasoning]);
+
+  // On arrival from an email link, open the report. If the user isn't logged in
+  // yet, stash the job so it survives the login round-trip (e.g. Google OAuth).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const jobParam = params.get("job");
+    if (!jobParam) return;
+
+    // Clean the job param from the URL once captured
+    window.history.replaceState({}, "", "/");
+
+    if (localStorage.getItem("token")) {
+      // Already authenticated — open immediately, no need to persist
+      localStorage.removeItem("pendingJob");
+      loadReportFromLink(jobParam);
+    } else {
+      // Not logged in yet — remember it and show what we can now
+      localStorage.setItem("pendingJob", JSON.stringify({ id: jobParam, ts: Date.now() }));
+      loadReportFromLink(jobParam);
+    }
+  }, [loadReportFromLink]);
+
+  // After login completes, open any report that was pending from an email link.
+  useEffect(() => {
+    if (!user) return;
+    const raw = localStorage.getItem("pendingJob");
+    if (!raw) return;
+    localStorage.removeItem("pendingJob");
+    try {
+      const { id, ts } = JSON.parse(raw);
+      // Ignore stale links (older than 15 minutes) to avoid surprise reopens
+      if (id && Date.now() - ts < 15 * 60 * 1000) {
+        loadReportFromLink(id);
+      }
+    } catch {
+      /* malformed value — ignore */
+    }
+  }, [user, loadReportFromLink]);
 
   const connectWebSocket = useCallback(
     (id) => {

@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import traceback
 import uuid
 import datetime
 
@@ -11,6 +12,7 @@ from langgraph.graph import StateGraph, END
 from shared.state import ResearchState
 from shared.message_bus import bus
 from shared.database import SessionLocal, ResearchJob, ReasoningTrace, init_db
+from shared.audit import audit
 from agents.search_agent import search_agent
 from agents.extractor_agent import extractor_agent
 from agents.validator_agent import validator_agent
@@ -93,6 +95,20 @@ async def _broadcast_reasoning(job_id: str, agent: str, step: str, reasoning: st
         pass  # Don't fail the pipeline for trace persistence issues
 
 
+def _audit_node_result(state: ResearchState, agent: str, result: dict, status: str) -> None:
+    """Record an audit entry whenever an agent reports an error / failed status."""
+    if status == "failed":
+        errors = result.get("errors") or []
+        audit(
+            "agent_failed",
+            level="error",
+            job_id=state.job_id,
+            agent=agent,
+            message=f"Agent '{agent}' reported a failure",
+            detail={"errors": errors},
+        )
+
+
 # ── Node wrappers (inject status broadcasts) ──────────────────────────────────
 
 async def search_node(state: ResearchState) -> dict:
@@ -114,6 +130,10 @@ async def search_node(state: ResearchState) -> dict:
         {"total": n_results, "web": web_count, "arxiv": arxiv_count})
     await _broadcast_log(state.job_id, "search", f"Found {n_results} results")
     status = "done" if "errors" not in result or not result["errors"] else "failed"
+    _audit_node_result(state, "search", result, status)
+    if status != "failed" and n_results == 0:
+        audit("no_search_results", level="warning", job_id=state.job_id, agent="search",
+              message=f"Search returned no results for query: {state.query!r}")
     await _broadcast_status(state.job_id, "search", status)
     return result
 
@@ -134,10 +154,14 @@ async def extractor_node(state: ResearchState) -> dict:
         {"chunk_count": n_chunks})
     await _broadcast_log(state.job_id, "extractor", f"Extracted {n_chunks} text chunks")
     status = "done" if "errors" not in result or not result["errors"] else "failed"
+    _audit_node_result(state, "extractor", result, status)
     await _broadcast_status(state.job_id, "extractor", status)
     # If no chunks extracted, validator and rag will be skipped — notify UI
     chunks = result.get("chunks", state.chunks)
     if not chunks:
+        audit("no_chunks_extracted", level="warning", job_id=state.job_id, agent="extractor",
+              message="No text chunks extracted — skipping validator & RAG, writer will use raw snippets",
+              detail={"source_count": n_urls})
         await _broadcast_reasoning(state.job_id, "extractor", "skip_decision",
             "No text chunks extracted from any source",
             "Skipping validator and RAG agents — writer will use raw search snippets")
@@ -167,6 +191,7 @@ async def validator_node(state: ResearchState) -> dict:
         {"verified": verified, "uncertain": uncertain, "disputed": disputed})
     await _broadcast_log(state.job_id, "validator", f"Validated {n_claims} claims")
     status = "done" if "errors" not in result or not result["errors"] else "failed"
+    _audit_node_result(state, "validator", result, status)
     await _broadcast_status(state.job_id, "validator", status)
     return result
 
@@ -186,6 +211,7 @@ async def rag_node(state: ResearchState) -> dict:
         {"rag_items": rag_items})
     await _broadcast_log(state.job_id, "rag", "RAG context prepared for writer")
     status = "done" if "errors" not in result or not result["errors"] else "failed"
+    _audit_node_result(state, "rag", result, status)
     await _broadcast_status(state.job_id, "rag", status)
     return result
 
@@ -208,6 +234,10 @@ async def writer_node(state: ResearchState) -> dict:
         {"report_length": len(report)})
     await _broadcast_log(state.job_id, "writer", f"Report generated ({len(report)} chars)")
     status = "done" if "errors" not in result or not result["errors"] else "failed"
+    _audit_node_result(state, "writer", result, status)
+    if status != "failed" and len(report.strip()) < 200:
+        audit("empty_report", level="warning", job_id=state.job_id, agent="writer",
+              message=f"Writer produced an unusually short report ({len(report)} chars)")
     await _broadcast_status(state.job_id, "writer", status)
     return result
 
@@ -275,6 +305,8 @@ async def run_research(query: str, job_id: str | None = None, user_id: str | Non
     db.close()
 
     logger.info(f"[orchestrator] Starting job {job_id} — query: {query!r}")
+    audit("job_started", job_id=job_id, user_id=user_id, agent="orchestrator",
+          message=f"Research job started — query: {query!r}")
     await _broadcast_status(job_id, "orchestrator", "running")
 
     initial_state = ResearchState(job_id=job_id, query=query, language=language)
@@ -283,6 +315,8 @@ async def run_research(query: str, job_id: str | None = None, user_id: str | Non
         final_state = await pipeline.ainvoke(initial_state)
         await _broadcast_status(job_id, "orchestrator", "done")
         logger.info(f"[orchestrator] Job {job_id} complete")
+        audit("job_completed", job_id=job_id, user_id=user_id, agent="orchestrator",
+              message="Research job completed successfully")
         return final_state
 
     except Exception as e:
@@ -294,6 +328,10 @@ async def run_research(query: str, job_id: str | None = None, user_id: str | Non
         db.close()
         await _broadcast_status(job_id, "orchestrator", "failed")
         logger.error(f"[orchestrator] Job {job_id} failed: {e}")
+        audit("job_failed", level="error", job_id=job_id, user_id=user_id,
+              agent="orchestrator",
+              message=f"Research job failed: {e}",
+              detail=traceback.format_exc())
         raise
 
 
