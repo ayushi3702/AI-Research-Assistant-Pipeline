@@ -20,19 +20,28 @@ def extract_text(filename: str, content: bytes) -> str:
     """Extract plain text from a file based on its extension."""
     ext = Path(filename).suffix.lower()
 
-    if ext == ".pdf":
-        return _extract_pdf(content)
-    elif ext in (".txt", ".md"):
-        return content.decode("utf-8", errors="ignore")
-    elif ext == ".docx":
-        return _extract_docx(content)
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
+    try:
+        if ext == ".pdf":
+            return _extract_pdf(content)
+        elif ext in (".txt", ".md"):
+            return content.decode("utf-8", errors="ignore")
+        elif ext == ".docx":
+            return _extract_docx(content)
+        else:
+            raise ValueError(f"Unsupported file type: {ext}")
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error("Failed to extract text from %s: %s", filename, e, exc_info=True)
+        raise ValueError(f"Could not extract text from {filename}: {e}") from e
 
 
 def _extract_pdf(content: bytes) -> str:
     doc = fitz.open(stream=io.BytesIO(content), filetype="pdf")
-    return "\n".join(page.get_text() for page in doc)
+    try:
+        return "\n".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
 
 
 def _extract_docx(content: bytes) -> str:

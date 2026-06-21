@@ -1,6 +1,13 @@
+/**
+ * Navbar — top bar with theme toggle, notifications, and authentication UI.
+ *
+ * Handles email/password and Google sign-in via a modal, shows a notification
+ * dropdown (polled every 30s), and auto-opens the login modal when a report
+ * link is opened while logged out.
+ */
 import { useState, useEffect, useRef } from "react";
 
-export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token }) {
+export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token, autoPromptLogin, authLoading }) {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "light");
   const [showLogin, setShowLogin] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -12,6 +19,12 @@ export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token }
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  // Open the sign-in modal automatically when a report link is opened while
+  // logged out (the report stays hidden until the user authenticates).
+  useEffect(() => {
+    if (autoPromptLogin && !user) setShowLogin(true);
+  }, [autoPromptLogin, user]);
 
   // Fetch notifications on mount and every 30s
   useEffect(() => {
@@ -146,6 +159,11 @@ export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token }
               <span className="navbar-user-name">{user.name || user.email}</span>
               <button className="btn-ghost" onClick={onLogout}>Logout</button>
             </div>
+          ) : authLoading ? (
+            <div className="navbar-auth-loading">
+              <span className="content-spinner" />
+              <span>Signing in…</span>
+            </div>
           ) : (
             <button className="btn-primary" onClick={() => setShowLogin(true)}>
               Sign in
@@ -158,7 +176,11 @@ export default function Navbar({ user, onLogout, onGoogleLogin, apiBase, token }
         <div className="modal-overlay" onClick={() => setShowLogin(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>Sign in</h2>
-            <p className="login-subtitle">Continue with your Google account</p>
+            <p className="login-subtitle">
+              {autoPromptLogin
+                ? "Sign in to view your research report"
+                : "Continue with your Google account"}
+            </p>
 
             <button
               className="btn-google"

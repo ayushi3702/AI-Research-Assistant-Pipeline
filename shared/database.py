@@ -1,3 +1,15 @@
+"""
+Database layer: SQLAlchemy ORM models, engine/session setup, and lightweight
+schema migration.
+
+Defines every persisted table (users, research jobs, agent tasks, documents,
+chat history, claim verifications, reasoning traces, notifications, OAuth
+connections, audit logs, Q&A interactions). Supports both SQLite (local default)
+and PostgreSQL (via DATABASE_URL). Timestamps are stored in IST (UTC+5:30).
+
+`init_db()` creates tables and reconciles the schema by adding any new model
+columns and dropping columns no longer defined on the models.
+"""
 from __future__ import annotations
 import uuid
 import datetime
@@ -11,10 +23,12 @@ Base = declarative_base()
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 def _now_ist():
+    """Return the current IST time as a naive datetime (for DB default values)."""
     return datetime.datetime.now(IST).replace(tzinfo=None)
 
 
 class User(Base):
+    """A registered account (email/password or Google OAuth)."""
     __tablename__ = "users"
 
     id            = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -27,6 +41,7 @@ class User(Base):
 
 
 class ResearchJob(Base):
+    """A full research-report request and its generated output."""
     __tablename__ = "research_jobs"
 
     id          = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -39,6 +54,7 @@ class ResearchJob(Base):
 
 
 class AgentTask(Base):
+    """Per-agent execution record for a job, with timing and I/O payloads."""
     __tablename__ = "agent_tasks"
 
     id          = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -53,6 +69,7 @@ class AgentTask(Base):
 
 
 class Source(Base):
+    """A source URL and content chunk gathered for a job."""
     __tablename__ = "sources"
 
     id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -65,6 +82,7 @@ class Source(Base):
 
 
 class Document(Base):
+    """An uploaded file processed for document Q&A (RAG)."""
     __tablename__ = "documents"
 
     id           = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -76,6 +94,7 @@ class Document(Base):
 
 
 class ChatHistory(Base):
+    """Sidebar history entry pointing to a research job or Q&A session."""
     __tablename__ = "chat_history"
 
     id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -88,6 +107,7 @@ class ChatHistory(Base):
 
 
 class ClaimVerification(Base):
+    """A fact-checked claim from a report with confidence and source links."""
     __tablename__ = "claim_verifications"
 
     id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -102,6 +122,7 @@ class ClaimVerification(Base):
 
 
 class ReasoningTrace(Base):
+    """A single step of an agent's reasoning narration for a job."""
     __tablename__ = "reasoning_traces"
 
     id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -115,6 +136,7 @@ class ReasoningTrace(Base):
 
 
 class NotificationLog(Base):
+    """An in-app/email notification record (e.g. report ready)."""
     __tablename__ = "notification_logs"
 
     id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -129,6 +151,7 @@ class NotificationLog(Base):
 
 
 class OAuthConnection(Base):
+    """Stored OAuth tokens for a user's external export integration."""
     __tablename__ = "oauth_connections"
 
     id            = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -144,6 +167,7 @@ class OAuthConnection(Base):
 
 
 class AuditLog(Base):
+    """Structured business-event audit record (queryable via the API)."""
     __tablename__ = "audit_logs"
 
     id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -158,6 +182,7 @@ class AuditLog(Base):
 
 
 class QAInteraction(Base):
+    """A single question/answer turn within a chat session."""
     __tablename__ = "qa_interactions"
 
     id              = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))

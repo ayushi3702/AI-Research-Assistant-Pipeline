@@ -1,3 +1,10 @@
+/**
+ * TrustHeatmap — renders the research report with inline fact-check highlighting.
+ *
+ * Claims are color-coded by verification status (verified / disputed /
+ * unverified) and expose a tooltip with supporting/contradicting sources, plus
+ * an overall confidence summary bar.
+ */
 import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 

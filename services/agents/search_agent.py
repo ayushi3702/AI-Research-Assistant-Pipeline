@@ -1,3 +1,10 @@
+"""
+Search Agent — first stage of the research pipeline.
+
+Given a research topic, this agent runs an agentic tool-use loop with GPT,
+letting the model issue multiple web (Tavily) and Arxiv searches from varied
+angles, then collects the discovered sources into the pipeline state.
+"""
 from __future__ import annotations
 import asyncio
 import json
@@ -30,7 +37,11 @@ tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 @tool
 def web_search(query: str, max_results: int = 5) -> list[dict]:
     """Search the web for recent information on a topic using Tavily."""
-    response = tavily.search(query=query, max_results=max_results)
+    try:
+        response = tavily.search(query=query, max_results=max_results)
+    except Exception:
+        logger.error("Tavily web search failed for query %r", query, exc_info=True)
+        return []
     return [
         {"url": r["url"], "title": r.get("title", ""), "snippet": r.get("content", ""), "source_type": "web"}
         for r in response.get("results", [])
@@ -40,16 +51,19 @@ def web_search(query: str, max_results: int = 5) -> list[dict]:
 @tool
 def arxiv_search(query: str, max_results: int = 3) -> list[dict]:
     """Search Arxiv for academic papers related to a topic."""
-    search = arxiv.Search(query=query, max_results=max_results)
-    client = arxiv.Client()
     results = []
-    for paper in client.results(search):
-        results.append({
-            "url": paper.entry_id,
-            "title": paper.title,
-            "snippet": paper.summary[:400],
-            "source_type": "arxiv",
-        })
+    try:
+        search = arxiv.Search(query=query, max_results=max_results)
+        client = arxiv.Client()
+        for paper in client.results(search):
+            results.append({
+                "url": paper.entry_id,
+                "title": paper.title,
+                "snippet": paper.summary[:400],
+                "source_type": "arxiv",
+            })
+    except Exception:
+        logger.error("Arxiv search failed for query %r", query, exc_info=True)
     return results
 
 

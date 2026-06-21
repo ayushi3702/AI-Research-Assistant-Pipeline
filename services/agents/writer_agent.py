@@ -1,3 +1,10 @@
+"""
+Writer Agent — final stage of the research pipeline.
+
+Synthesizes the validated claims, extracted chunks, and retrieved RAG context
+into a structured Markdown report in the requested language, persists it to the
+ResearchJob, and triggers the "report ready" email notification.
+"""
 from __future__ import annotations
 import json
 import os
@@ -21,6 +28,7 @@ llm = AzureChatOpenAI(
 
 
 def _build_writer_prompt(state: ResearchState) -> str:
+    """Assemble the user prompt: top chunks, validated claims, and RAG context."""
     # Top chunks as context
     top_chunks = sorted(state.chunks, key=lambda c: c.relevance_score, reverse=True)[:12]
     context_blocks = "\n\n".join(

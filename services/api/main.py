@@ -1,3 +1,12 @@
+"""
+FastAPI application — the HTTP/WebSocket gateway for the research pipeline.
+
+Exposes endpoints for authentication (email + Google OAuth), launching and
+polling research jobs, live agent-status streaming over WebSocket, quick RAG
+Q&A, document upload and Q&A, report refinement, audit-log access, exporting
+reports to Notion / Google Docs, and notifications. Business logic lives in the
+agent modules and the shared package; this module wires HTTP I/O to them.
+"""
 from __future__ import annotations
 import asyncio
 import json
@@ -13,19 +22,24 @@ from pydantic import BaseModel, EmailStr
 
 from shared.database import init_db, SessionLocal, ResearchJob, AgentTask, User, Document, ChatHistory, QAInteraction, ClaimVerification, ReasoningTrace, NotificationLog, OAuthConnection, AuditLog
 from shared.message_bus import bus
+from shared.logging_config import configure_logging
 from shared.auth import (
     hash_password, verify_password, create_access_token,
     create_verification_token, decode_token, send_verification_email,
 )
 from agents.orchestrator import run_research
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     init_db()
+    logger.info("API startup complete — logging and database initialized")
     yield
+    logger.info("API shutting down")
 
 app = FastAPI(title="Research Pipeline API", lifespan=lifespan)
 
@@ -269,7 +283,7 @@ async def start_research(req: ResearchRequest, request: Request):
         try:
             await run_research(req.query, job_id=job_id, user_id=user_id, language=req.language)
         except Exception as e:
-            logger.error(f"Background pipeline error: {e}")
+            logger.error("Background pipeline error for job %s: %s", job_id, e, exc_info=True)
 
     asyncio.create_task(_run())
 
@@ -607,6 +621,7 @@ async def refine_report(job_id: str, req: RefineRequest, request: Request):
                         j.report = answer_text
                         db2.commit()
                 except Exception:
+                    logger.error("Failed to save refined report for job %s", job_id, exc_info=True)
                     db2.rollback()
                 finally:
                     db2.close()
@@ -627,12 +642,14 @@ async def refine_report(job_id: str, req: RefineRequest, request: Request):
                     db3.add(qa)
                     db3.commit()
                 except Exception:
+                    logger.error("Failed to save refinement interaction for job %s", job_id, exc_info=True)
                     db3.rollback()
                 finally:
                     db3.close()
 
             yield f"data: {json.dumps({'type': 'done', 'is_report_update': is_report_update})}\n\n"
         except Exception as e:
+            logger.error("Refinement stream failed for job %s: %s", job_id, e, exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -668,6 +685,7 @@ async def _generate_chat_title(question: str) -> str:
         return title[:60] if title else question[:60]
     except Exception:
         # Fallback: truncate the question itself
+        logger.warning("Chat title generation failed; using truncated question", exc_info=True)
         return question[:60] if len(question) > 60 else question
 
 
@@ -685,6 +703,7 @@ def _save_chat_history(user_id: str, chat_type: str, title: str, ref_id: str):
         db.add(entry)
         db.commit()
     except Exception:
+        logger.error("Failed to persist chat history for user %s", user_id, exc_info=True)
         db.rollback()
     finally:
         db.close()
@@ -705,6 +724,7 @@ async def _generate_followups(llm, question: str, answer: str) -> list[str]:
         lines = [l.strip() for l in resp.content.strip().split("\n") if l.strip()]
         return lines[:3]
     except Exception:
+        logger.warning("Follow-up question generation failed", exc_info=True)
         return []
 
 
@@ -756,6 +776,7 @@ async def toggle_pin_chat(chat_id: str, request: Request):
     except HTTPException:
         raise
     except Exception:
+        logger.error("Failed to toggle pin for chat %s", chat_id, exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to update pin status")
     finally:
@@ -1231,18 +1252,19 @@ async def websocket_status(websocket: WebSocket, job_id: str):
                 break
 
     except WebSocketDisconnect:
-        pass
+        logger.debug("WebSocket client disconnected for job %s", job_id)
     except Exception as e:
-        logger.error(f"WebSocket error for job {job_id}: {e}")
+        logger.error("WebSocket error for job %s: %s", job_id, e, exc_info=True)
     finally:
         try:
             await websocket.close()
         except Exception:
-            pass
+            logger.debug("WebSocket already closed for job %s", job_id, exc_info=True)
 
 
 @app.get("/health")
 async def health():
+    """Liveness probe used by Docker / load balancers."""
     return {"status": "ok"}
 
 
@@ -1347,6 +1369,7 @@ async def quick_ask(req: QuickAskRequest, request: Request):
                 title = await _generate_chat_title(req.question)
                 _save_chat_history(user["user_id"], "Q&A", title, chat_session_id)
         except Exception:
+            logger.error("Failed to persist Q&A interaction for session %s", chat_session_id, exc_info=True)
             db.rollback()
         finally:
             db.close()
@@ -1438,6 +1461,7 @@ async def quick_ask_stream(req: QuickAskRequest, request: Request):
             yield f"data: {json.dumps({'type': 'followups', 'followups': followups})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
+            logger.error("Quick-ask stream failed: %s", e, exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
         # Save to DB after stream completes
@@ -1458,6 +1482,7 @@ async def quick_ask_stream(req: QuickAskRequest, request: Request):
                     title = await _generate_chat_title(req.question)
                     _save_chat_history(user["user_id"], "Q&A", title, chat_session_id)
             except Exception:
+                logger.error("Failed to persist streamed quick-ask Q&A for session %s", chat_session_id, exc_info=True)
                 db.rollback()
             finally:
                 db.close()
@@ -1476,6 +1501,7 @@ import os
 _llm = None
 
 def _get_llm():
+    """Lazily build and cache a shared AzureChatOpenAI client for document Q&A."""
     global _llm
     if _llm is None:
         _llm = AzureChatOpenAI(
@@ -1543,6 +1569,7 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
         }
 
     except ValueError as e:
+        logger.warning("Document upload validation failed: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -1631,6 +1658,7 @@ async def ask_document(req: QuestionRequest, request: Request):
                 title = await _generate_chat_title(req.question)
                 _save_chat_history(user["user_id"], "Q&A", title, chat_session_id)
         except Exception:
+            logger.error("Failed to persist document Q&A for session %s", chat_session_id, exc_info=True)
             db.rollback()
         finally:
             db.close()
@@ -1683,7 +1711,7 @@ async def ask_document_stream(req: QuestionRequest, request: Request):
                 )
                 web_sources = [{"url": r.get("url", ""), "title": r.get("title", "")} for r in web_items]
         except Exception as e:
-            logger.warning(f"[doc_ask] Web search fallback failed: {e}")
+            logger.warning("[doc_ask] Web search fallback failed: %s", e, exc_info=True)
 
     context = "\n\n".join(
         f"[Chunk {r['chunk_index'] + 1}]: {r['content']}"
@@ -1752,6 +1780,7 @@ async def ask_document_stream(req: QuestionRequest, request: Request):
             yield f"data: {json.dumps({'type': 'followups', 'followups': followups})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
+            logger.error("Document-ask stream failed for doc %s: %s", req.doc_id, e, exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
         if user and answer_text:
@@ -1771,6 +1800,7 @@ async def ask_document_stream(req: QuestionRequest, request: Request):
                     title = await _generate_chat_title(req.question)
                     _save_chat_history(user["user_id"], "Q&A", title, chat_session_id)
             except Exception:
+                logger.error("Failed to persist streamed document Q&A for session %s", chat_session_id, exc_info=True)
                 db.rollback()
             finally:
                 db.close()

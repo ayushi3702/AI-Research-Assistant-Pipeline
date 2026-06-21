@@ -1,3 +1,10 @@
+"""
+Extractor Agent — second stage of the research pipeline.
+
+Fetches the full content of each discovered source (HTML via Playwright/
+BeautifulSoup, PDFs via PyMuPDF), splits it into passages, and scores each
+passage's relevance to the query with GPT, producing ranked ExtractedChunks.
+"""
 from __future__ import annotations
 import asyncio
 import json
@@ -63,6 +70,7 @@ async def _fetch_pdf(url: str) -> str:
 
 
 async def _fetch_content(url: str) -> str:
+    """Dispatch to the PDF or HTML fetcher based on the URL shape."""
     if url.endswith(".pdf") or "arxiv.org/pdf" in url:
         return await _fetch_pdf(url)
     return await _fetch_html(url)
@@ -101,6 +109,9 @@ async def _score_chunk(query: str, chunk: str) -> float:
         ])
         return float(response.content.strip())
     except Exception:
+        logger.warning(
+            "Failed to score chunk relevance; defaulting to 0.5", exc_info=True
+        )
         return 0.5
 
 

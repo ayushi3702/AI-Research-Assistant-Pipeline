@@ -1,5 +1,10 @@
 """
-Authentication utilities — JWT tokens, password hashing, email verification.
+Authentication and email utilities.
+
+Provides password hashing (bcrypt), JWT access/verification token creation and
+decoding, and transactional email senders for account verification and
+"report ready" notifications. Email sending uses SMTP when configured and
+otherwise falls back to logging the link (useful in local development).
 """
 from __future__ import annotations
 import os
@@ -19,26 +24,31 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
+    """Hash a plaintext password with bcrypt for storage."""
     return pwd_context.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    """Return True if a plaintext password matches its stored bcrypt hash."""
     return pwd_context.verify(plain, hashed)
 
 
 def create_access_token(user_id: str, email: str) -> str:
+    """Create a signed JWT session token (valid for ACCESS_TOKEN_EXPIRE_MINUTES)."""
     expire = datetime.datetime.utcnow() + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": user_id, "email": email, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_verification_token(email: str) -> str:
+    """Create a short-lived JWT used to verify ownership of an email address."""
     expire = datetime.datetime.utcnow() + datetime.timedelta(minutes=VERIFY_TOKEN_EXPIRE_MINUTES)
     payload = {"email": email, "purpose": "verify", "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> Optional[dict]:
+    """Decode and verify a JWT, returning its claims or None if invalid/expired."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
@@ -84,13 +94,16 @@ async def send_verification_email(email: str, token: str) -> None:
         """
         msg.attach(MIMEText(html, "html"))
 
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            if smtp_user:
-                server.login(smtp_user, smtp_pass)
-            server.sendmail(from_email, email, msg.as_string())
-
-        logger.info(f"[auth] Verification email sent to {email}")
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                if smtp_user:
+                    server.login(smtp_user, smtp_pass)
+                server.sendmail(from_email, email, msg.as_string())
+            logger.info(f"[auth] Verification email sent to {email}")
+        except Exception as e:
+            logger.error("[auth] Failed to send verification email to %s: %s", email, e, exc_info=True)
+            raise
     else:
         # No SMTP configured — log the verification link
         logger.warning(
@@ -159,7 +172,7 @@ async def send_report_notification(email: str, query: str, job_id: str, user_id:
             logger.info(f"[notify] Report notification sent to {email} for job {job_id}")
         except Exception as e:
             send_status = "failed"
-            logger.error(f"[notify] Failed to send notification to {email}: {e}")
+            logger.error("[notify] Failed to send notification to %s: %s", email, e, exc_info=True)
     else:
         logger.info(f"[notify] SMTP not configured. Report ready for {email}: {report_url}")
 

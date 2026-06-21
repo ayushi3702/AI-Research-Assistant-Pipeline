@@ -1,3 +1,11 @@
+"""
+Orchestrator — wires the five research agents into a LangGraph state machine.
+
+The pipeline flows search → extractor → validator → rag → writer, with conditional
+edges that can short-circuit when a stage yields nothing usable. Each node wrapper
+broadcasts live status / reasoning events over the message bus for the UI and
+records audit entries. `run_research` is the public entry point used by the API.
+"""
 from __future__ import annotations
 import asyncio
 import json
@@ -54,11 +62,13 @@ def should_continue_after_rag(state: ResearchState) -> str:
 # ── Status broadcast (for WebSocket streaming) ────────────────────────────────
 
 async def _broadcast_status(job_id: str, agent: str, status: str) -> None:
+    """Publish an agent status change to the job's WebSocket channel."""
     payload = {"job_id": job_id, "agent": agent, "status": status}
     await bus.publish(f"status:{job_id}", json.dumps(payload))
 
 
 async def _broadcast_log(job_id: str, agent: str, message: str) -> None:
+    """Publish a human-readable progress log line to the job's channel."""
     payload = {"job_id": job_id, "type": "log", "agent": agent, "message": message}
     await bus.publish(f"status:{job_id}", json.dumps(payload))
 
@@ -92,7 +102,10 @@ async def _broadcast_reasoning(job_id: str, agent: str, step: str, reasoning: st
         db.commit()
         db.close()
     except Exception:
-        pass  # Don't fail the pipeline for trace persistence issues
+        logger.warning(
+            "Failed to persist reasoning trace for job %s agent %s",
+            job_id, agent, exc_info=True,
+        )  # Don't fail the pipeline for trace persistence issues
 
 
 def _audit_node_result(state: ResearchState, agent: str, result: dict, status: str) -> None:
@@ -112,6 +125,7 @@ def _audit_node_result(state: ResearchState, agent: str, result: dict, status: s
 # ── Node wrappers (inject status broadcasts) ──────────────────────────────────
 
 async def search_node(state: ResearchState) -> dict:
+    """Run the search agent, broadcasting strategy/results reasoning and audits."""
     await _broadcast_status(state.job_id, "search", "running")
     await _broadcast_reasoning(state.job_id, "search", "strategy",
         f"Analyzing query to determine optimal search strategy",
@@ -139,6 +153,7 @@ async def search_node(state: ResearchState) -> dict:
 
 
 async def extractor_node(state: ResearchState) -> dict:
+    """Run the extractor agent; if no chunks result, skip validator & RAG."""
     await _broadcast_status(state.job_id, "extractor", "running")
     n_urls = len(state.search_results)
     await _broadcast_reasoning(state.job_id, "extractor", "planning",
@@ -172,6 +187,7 @@ async def extractor_node(state: ResearchState) -> dict:
 
 
 async def validator_node(state: ResearchState) -> dict:
+    """Run the validator agent and broadcast verified/disputed claim counts."""
     await _broadcast_status(state.job_id, "validator", "running")
     await _broadcast_reasoning(state.job_id, "validator", "claim_extraction",
         f"Analyzing {len(state.chunks)} chunks to identify key factual claims",
@@ -197,6 +213,7 @@ async def validator_node(state: ResearchState) -> dict:
 
 
 async def rag_node(state: ResearchState) -> dict:
+    """Run the RAG agent to index chunks and retrieve related past context."""
     await _broadcast_status(state.job_id, "rag", "running")
     await _broadcast_reasoning(state.job_id, "rag", "context_retrieval",
         "Searching vector database for related past research and context",
@@ -217,6 +234,7 @@ async def rag_node(state: ResearchState) -> dict:
 
 
 async def writer_node(state: ResearchState) -> dict:
+    """Run the writer agent to synthesize the final report from all inputs."""
     await _broadcast_status(state.job_id, "writer", "running")
     n_sources = len(state.chunks)
     n_claims = len(state.validated_claims)
@@ -245,6 +263,7 @@ async def writer_node(state: ResearchState) -> dict:
 # ── Build the graph ───────────────────────────────────────────────────────────
 
 def build_graph() -> StateGraph:
+    """Assemble and compile the LangGraph pipeline with its conditional edges."""
     graph = StateGraph(ResearchState)
 
     # Register nodes
@@ -342,7 +361,8 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
+    from shared.logging_config import configure_logging
+    configure_logging()
     query = " ".join(sys.argv[1:])
     if not query:
         print("Usage: python orchestrator.py <query>")

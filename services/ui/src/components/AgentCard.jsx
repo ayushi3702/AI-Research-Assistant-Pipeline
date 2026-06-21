@@ -1,3 +1,10 @@
+/**
+ * AgentCard — compact status tile for a single pipeline agent.
+ *
+ * @param {string} icon   Emoji/icon representing the agent.
+ * @param {string} label  Human-readable agent name.
+ * @param {string} status One of waiting | running | done | failed | skipped.
+ */
 export default function AgentCard({ icon, label, status }) {
   const statusIcons = {
     waiting: "⬜",

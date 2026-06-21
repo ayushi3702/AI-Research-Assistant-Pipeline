@@ -1,4 +1,10 @@
 """
+Unit tests for the research pipeline.
+
+Covers the in-memory MessageBus, ResearchState defaults and list-merge
+semantics, each agent's behavior with mocked LLM/DB/network dependencies, and
+the orchestrator's conditional routing decisions.
+
 Run with: pytest tests/ -v
 """
 from __future__ import annotations

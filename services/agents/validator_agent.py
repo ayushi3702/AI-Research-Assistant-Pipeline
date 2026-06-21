@@ -1,3 +1,10 @@
+"""
+Validator Agent — third stage of the research pipeline.
+
+Builds a per-job vector store from the extracted chunks, then fact-checks the
+key claims by retrieving related passages and asking GPT which sources support
+or contradict each claim, yielding confidence-scored ValidatedClaims.
+"""
 from __future__ import annotations
 import json
 import os
@@ -28,11 +35,13 @@ embed_fn = embedding_functions.DefaultEmbeddingFunction()
 # ── Build vector store from extracted chunks ──────────────────────────────────
 
 def _build_collection(state: ResearchState) -> chromadb.Collection:
+    """Create a fresh ChromaDB collection for this job and load its chunks."""
     col_name = f"job_{state.job_id.replace('-', '_')}"
     try:
         chroma_client.delete_collection(col_name)
     except Exception:
-        pass
+        # Collection may not exist yet on first build — expected, log at debug.
+        logger.debug("No existing collection %s to delete", col_name, exc_info=True)
 
     collection = chroma_client.create_collection(
         name=col_name,
@@ -91,6 +100,10 @@ async def _validate_claim(
             confidence=float(data.get("confidence", 0.7)),
         )
     except Exception:
+        logger.warning(
+            "Failed to parse validator JSON for claim %r; falling back to source URLs",
+            claim[:120], exc_info=True,
+        )
         urls = [m["url"] for m in metas]
         return ValidatedClaim(claim=claim, supported_by=urls, confidence=0.5)
 

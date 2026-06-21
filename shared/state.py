@@ -1,3 +1,10 @@
+"""
+Shared data models and the LangGraph pipeline state.
+
+Defines the Pydantic models exchanged between agents (search results, extracted
+chunks, validated claims) and the `ResearchState` object that flows through the
+LangGraph state machine, accumulating each agent's output as the pipeline runs.
+"""
 from __future__ import annotations
 from typing import Annotated, Any
 from pydantic import BaseModel, Field
@@ -8,6 +15,7 @@ import operator
 # ── Shared data models ────────────────────────────────────────────────────────
 
 class SearchResult(BaseModel):
+    """A single source discovered by the search agent (web page or paper)."""
     url: str
     title: str
     snippet: str
@@ -15,6 +23,7 @@ class SearchResult(BaseModel):
 
 
 class ExtractedChunk(BaseModel):
+    """A relevance-scored passage of text extracted from a source."""
     url: str
     content: str
     relevance_score: float = 0.0
@@ -22,6 +31,7 @@ class ExtractedChunk(BaseModel):
 
 
 class ValidatedClaim(BaseModel):
+    """A claim fact-checked against sources, with supporting/contradicting URLs."""
     claim: str
     supported_by: list[str]   # list of URLs
     contradicted_by: list[str] = []
@@ -33,6 +43,14 @@ class ValidatedClaim(BaseModel):
 # rather than overwriting it — safe for parallel agent execution.
 
 class ResearchState(BaseModel):
+    """
+    The mutable state threaded through the LangGraph research pipeline.
+
+    Each agent reads the fields it needs and returns a partial update; list
+    fields are merged via `operator.add` (append) so that updates from
+    sequential — or potentially parallel — agents accumulate instead of
+    clobbering one another.
+    """
     # Input
     job_id: str = ""
     query: str = ""

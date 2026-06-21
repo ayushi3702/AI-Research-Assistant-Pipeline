@@ -1,5 +1,12 @@
+/**
+ * Sidebar — collapsible panel listing the user's chat/research history.
+ *
+ * Loads recent chats for the authenticated user, supports pinning and
+ * selecting a chat, and starting a new conversation.
+ */
 import { useState, useEffect } from "react";
 
+/** Derive up-to-two-letter initials from a user's name or email for the avatar. */
 function getInitials(user) {
   if (!user) return "";
   if (user.name) {
@@ -8,10 +15,11 @@ function getInitials(user) {
   return user.email ? user.email[0].toUpperCase() : "";
 }
 
-export default function Sidebar({ apiBase, onSelectChat, onNewChat, token, user }) {
+export default function Sidebar({ apiBase, onSelectChat, onNewChat, token, user, authLoading }) {
   const [chats, setChats] = useState([]);
   const [error, setError] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(!!token);
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -20,7 +28,8 @@ export default function Sidebar({ apiBase, onSelectChat, onNewChat, token, user 
     fetch(`${apiBase}/chats`, { headers })
       .then((res) => res.json())
       .then((data) => setChats(Array.isArray(data) ? data.slice(0, 30) : []))
-      .catch(() => setError(true));
+      .catch(() => setError(true))
+      .finally(() => setLoadingChats(false));
   };
 
   const togglePin = (e, chatId) => {
@@ -33,8 +42,10 @@ export default function Sidebar({ apiBase, onSelectChat, onNewChat, token, user 
     if (!token) {
       setChats([]);
       setError(false);
+      setLoadingChats(false);
       return;
     }
+    setLoadingChats(true);
     refreshChats();
     const interval = setInterval(refreshChats, 15000);
     return () => clearInterval(interval);
@@ -90,11 +101,25 @@ export default function Sidebar({ apiBase, onSelectChat, onNewChat, token, user 
           </button>
         )}
 
-        {!token && (
+        {!token && authLoading && (
+          <div className="sidebar-loading">
+            <span className="content-spinner" />
+            <span>Loading chats…</span>
+          </div>
+        )}
+
+        {!token && !authLoading && (
           <p className="sidebar-empty">Login to see chat history</p>
         )}
 
-        {token && !error && chats.length === 0 && (
+        {token && (loadingChats || authLoading) && chats.length === 0 && !error && (
+          <div className="sidebar-loading">
+            <span className="content-spinner" />
+            <span>Loading chats…</span>
+          </div>
+        )}
+
+        {token && !error && !loadingChats && !authLoading && chats.length === 0 && (
           <p className="sidebar-empty">No chat history yet</p>
         )}
 

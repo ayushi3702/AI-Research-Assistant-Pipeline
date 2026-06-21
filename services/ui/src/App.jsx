@@ -1,3 +1,11 @@
+/**
+ * App — root component for the research assistant UI.
+ *
+ * Owns the top-level application state (auth, current query/job, agent
+ * statuses, chat history, document Q&A, report refinement) and orchestrates
+ * the WebSocket connection that streams live agent status and reasoning during
+ * a research run. Renders the Navbar, Sidebar, agent cards, and result panels.
+ */
 import { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import Sidebar from "./components/Sidebar";
@@ -44,6 +52,9 @@ export default function App() {
   const [reasoningExpanded, setReasoningExpanded] = useState(true);
   const [exportConnections, setExportConnections] = useState({ notion: false, google_docs: false });
   const [exporting, setExporting] = useState(null); // null | "notion" | "google_docs"
+  const [reportLoginPrompt, setReportLoginPrompt] = useState(false); // email link clicked while logged out
+  const [contentLoading, setContentLoading] = useState(false); // loading a report/chat from sidebar or email link
+  const [authLoading, setAuthLoading] = useState(!!localStorage.getItem("token")); // restoring session on load
 
   const wsRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -112,11 +123,13 @@ export default function App() {
 
   // Fetch user info when token is set
   useEffect(() => {
-    if (!token) { setUser(null); return; }
+    if (!token) { setUser(null); setAuthLoading(false); return; }
+    setAuthLoading(true);
     fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => { if (!res.ok) throw new Error(); return res.json(); })
       .then((data) => setUser(data))
-      .catch(() => { setToken(null); setUser(null); localStorage.removeItem("token"); });
+      .catch(() => { setToken(null); setUser(null); localStorage.removeItem("token"); })
+      .finally(() => setAuthLoading(false));
   }, [token]);
 
   const handleLogout = () => {
@@ -231,6 +244,7 @@ export default function App() {
   const handleSelectJob = async (chat) => {
     resetState();
     setRunning(false);
+    setContentLoading(true);
 
     if (chat.type === "Research") {
       setMode("report");
@@ -249,6 +263,8 @@ export default function App() {
         fetchReasoning(chat.ref_id);
       } catch (e) {
         setError(`Could not load job: ${e.message}`);
+      } finally {
+        setContentLoading(false);
       }
     } else if (chat.type === "Q&A") {
       setMode("ask");
@@ -272,7 +288,11 @@ export default function App() {
         }
       } catch (e) {
         setError(`Could not load chat: ${e.message}`);
+      } finally {
+        setContentLoading(false);
       }
+    } else {
+      setContentLoading(false);
     }
   };
 
@@ -322,6 +342,7 @@ export default function App() {
   const loadReportFromLink = useCallback(async (jobParam) => {
     setMode("report");
     setJobId(jobParam);
+    setContentLoading(true);
     try {
       const res = await fetch(`${API_BASE}/research/${jobParam}`);
       if (!res.ok) throw new Error("Job not found");
@@ -337,11 +358,14 @@ export default function App() {
       fetchReasoning(jobParam);
     } catch (e) {
       setError(`Could not load report: ${e.message}`);
+    } finally {
+      setContentLoading(false);
     }
   }, [fetchClaims, fetchReasoning]);
 
-  // On arrival from an email link, open the report. If the user isn't logged in
-  // yet, stash the job so it survives the login round-trip (e.g. Google OAuth).
+  // On arrival from an email link, defer opening the report until the user is
+  // authenticated. Unauthenticated visitors must sign in first — we never render
+  // a report without a valid session.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const jobParam = params.get("job");
@@ -350,20 +374,20 @@ export default function App() {
     // Clean the job param from the URL once captured
     window.history.replaceState({}, "", "/");
 
-    if (localStorage.getItem("token")) {
-      // Already authenticated — open immediately, no need to persist
-      localStorage.removeItem("pendingJob");
-      loadReportFromLink(jobParam);
-    } else {
-      // Not logged in yet — remember it and show what we can now
-      localStorage.setItem("pendingJob", JSON.stringify({ id: jobParam, ts: Date.now() }));
-      loadReportFromLink(jobParam);
+    // Remember the job so it survives the login round-trip (e.g. Google OAuth).
+    localStorage.setItem("pendingJob", JSON.stringify({ id: jobParam, ts: Date.now() }));
+
+    // Defer loading to the `user` effect below. If there's no session yet,
+    // prompt the visitor to sign in.
+    if (!localStorage.getItem("token")) {
+      setReportLoginPrompt(true);
     }
-  }, [loadReportFromLink]);
+  }, []);
 
   // After login completes, open any report that was pending from an email link.
   useEffect(() => {
     if (!user) return;
+    setReportLoginPrompt(false);
     const raw = localStorage.getItem("pendingJob");
     if (!raw) return;
     localStorage.removeItem("pendingJob");
@@ -716,9 +740,11 @@ export default function App() {
         onGoogleLogin={handleGoogleLogin}
         apiBase={API_BASE}
         token={token}
+        autoPromptLogin={reportLoginPrompt}
+        authLoading={authLoading}
       />
       <div className="app-layout">
-        <Sidebar apiBase={API_BASE} onSelectChat={handleSelectJob} onNewChat={handleNewChat} token={token} user={user} />
+        <Sidebar apiBase={API_BASE} onSelectChat={handleSelectJob} onNewChat={handleNewChat} token={token} user={user} authLoading={authLoading} />
 
       <main className="main-content">
         <div className="input-area">
@@ -830,6 +856,15 @@ export default function App() {
         <div className="results-area">
 
         {error && <div className="error-banner">{error}</div>}
+
+        {contentLoading && (
+          <div className="content-loading">
+            <span className="content-spinner" />
+            <span className="content-loading-text">
+              {mode === "ask" ? "Loading conversation…" : "Loading report…"}
+            </span>
+          </div>
+        )}
 
         {chatMessages.length > 0 && (
           <div className="chat-messages">
